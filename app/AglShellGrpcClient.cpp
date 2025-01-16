@@ -206,3 +206,21 @@ GrpcClient::GetOutputs()
 
 	return v;
 }
+
+// C interface
+extern "C" GrpcClient *init_grpc_client(void)
+{
+	GrpcClient *client = new GrpcClient();
+
+	return client;
+}
+
+extern "C" void grpc_client_set_app_float(GrpcClient *c, const char *app_id, int32_t x_pos, int32_t y_pos)
+{
+	c->SetAppFloat(std::string(app_id), x_pos, y_pos);
+}
+
+extern "C" void destroy_grpc_client(GrpcClient *c)
+{
+	delete c;
+}

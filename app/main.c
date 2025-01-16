@@ -39,7 +39,9 @@ pid_t gettid(void)
 
 #include "ilm_control_wrapper.h"
 #include "comm_parser.h"
+#include "aglshell_grpc_wrapper.h"
 static char *json_cfg_path = NULL;
+static int use_grpc_proxy = 0;
 
 #include <poll.h>
 #include "comm_receiver.h"
@@ -132,6 +134,7 @@ static int usage(int ret)
 	fprintf(stderr,
 		" usage \n"
 		"    -h,  --help                  display this help and exit \n"
+		"    -g,  --use-grpc              use gRPC proxy (for AGL compositor)\n"
 		"    -c,  --path                  Init config file path \n");
 	exit(ret);
 }
@@ -139,9 +142,11 @@ static int usage(int ret)
 static void parse_option(int argc, char *argv[])
 {
 	int opt;
+
 	static const struct option options[] = {
 		{ "help", no_argument, NULL, 'h' },
 		{ "path", optional_argument, NULL, 'c' },
+		{ "use-grpc", optional_argument, NULL, 'g' },
 		{ 0, 0, NULL, 0 }
 	};
 
@@ -158,6 +163,9 @@ static void parse_option(int argc, char *argv[])
 		case 'c':
 			json_cfg_path = optarg;
 			break;
+		case 'g':
+			use_grpc_proxy = 1;
+			break;
 		default:
 			usage(EXIT_FAILURE);
 			break;
@@ -167,6 +175,8 @@ static void parse_option(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
+	struct GrpcClient *grpc_client = NULL;
+
 	if ((argc > 1) && (!strncmp(argv[1], "-", 1))) {
 		parse_option(argc, argv);
 	}
@@ -178,13 +188,19 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 	pipe_readfd = pipefd[0];
-	wrap_ilm_init(pipefd[1]);
+
+	if (!use_grpc_proxy)
+		wrap_ilm_init(pipefd[1]);
+	else
+		grpc_client = init_grpc_client();
+
 	parser_init(json_cfg_path);
 
 	wait_event_loop();
 
 	close(pipefd[0]);
 	close(pipefd[1]);
+	destroy_grpc_client(grpc_client);
 
 	return EXIT_SUCCESS;
 }
