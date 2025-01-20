@@ -342,6 +342,53 @@ static void add_layers_to_screen(list_element_t *screen_elm)
 	}
 }
 
+static void grpc_add_exists_surfaces_to_layer(list_element_t *layer_elm)
+{
+	int surfaces = get_list_size(&layer_elm->list_head);
+	t_ilm_surface *surface_array_n =
+		malloc(surfaces * sizeof(t_ilm_surface));
+
+	surfaces = 0;
+	list_element_t *surface_elm;
+	TAILQ_FOREACH(surface_elm, &layer_elm->list_head, entry)
+	{
+		/* FIXME */
+#if 0
+		if (wrap_ilm_surface_exists(surface_elm->id)) {
+			surface_array_n[surfaces] = surface_elm->id;
+			surfaces++;
+		}
+#endif
+	}
+#if 0
+	wrap_ilm_add_surface_to_layer(layer_elm->id, surface_array_n, surfaces);
+#endif
+
+	if (surface_array_n) {
+		free(surface_array_n);
+	}
+}
+
+static void grpc_add_layers_to_screen(list_element_t *screen_elm)
+{
+	int layers = get_list_size(&screen_elm->list_head);
+	t_ilm_layer *layer_array_n = malloc(layers * sizeof(t_ilm_layer));
+
+	layers = 0;
+	list_element_t *layer_elm;
+	TAILQ_FOREACH(layer_elm, &screen_elm->list_head, entry)
+	{
+		grpc_add_exists_surfaces_to_layer(layer_elm);
+
+		layer_array_n[layers] = layer_elm->id;
+		layers++;
+	}
+
+	if (layer_array_n) {
+		free(layer_array_n);
+	}
+}
+
 int parser_add_ivi_surface_by_event_notification(t_ilm_uint surface_id)
 {
 	list_element_t *screen_elm;
@@ -773,6 +820,40 @@ static list_element_t *decide_add_or_update_surface(list_element_t *layer_elm,
 	return surface_elm;
 }
 
+static list_element_t *
+grpc_add_layer(list_element_t *screen_elm, json_t *layer_jobj, int layer_id,
+	      CMD_TYPE type, insert_info_t insert_info)
+{
+	list_element_t *layer_elm = pop_layer(layer_id);
+	if (layer_elm == NULL) {
+		layer_properties_t layer_prop;
+		parse_layer_properties(&layer_prop, layer_jobj, type);
+
+		layer_elm = add_layer(screen_elm, &layer_prop, layer_id, insert_info);
+	}
+
+	return layer_elm;
+}
+
+static list_element_t *
+grpc_add_surface(list_element_t *layer_elm, json_t *surface_jobj,
+		 int surface_id, CMD_TYPE type, insert_info_t insert_info)
+{
+	list_element_t *surface_elm =
+		pop_list_element(&layer_elm->list_head, surface_id);
+
+	if (surface_elm == NULL) {
+		surface_properties_t surface_prop;
+		parse_surface_properties(&surface_prop, surface_jobj, type);
+
+		surface_elm = add_surface(layer_elm, &surface_prop, surface_id, insert_info);
+
+		/* FIXME: gRPC floating here? */
+	}
+
+	return surface_elm;
+}
+
 static int init_default_config(void)
 {
 	fprintf(stderr, "%s(%d) WARNING: Init default config\n", __func__,
@@ -853,7 +934,68 @@ static int parse_all_in_screen(json_t *jobject)
 	return 0;
 }
 
-static int parse_init_json_config(char *json_cfg_path)
+static int parse_all_grpc_in_screen(json_t *jobject)
+{
+	int screen_idx, layer_idx, surface_idx;
+
+	//1. screens(list)
+	json_t *screen_ary_jobj = NULL;
+	parse_screens(jobject, &screen_ary_jobj);
+
+	json_t *screen_jobj;
+	json_array_foreach(screen_ary_jobj, screen_idx, screen_jobj)
+	{
+		int screen_id = 0;
+		parse_id(screen_jobj, &screen_id);
+		if (wrap_ilm_screen_exists(screen_id) == 0) {
+			fprintf(stderr, "%s(%d) ERROR: Screen %d not found\n",
+				__func__, __LINE__, screen_id);
+			return -1;
+		}
+
+		list_element_t *screen_elm;
+		screen_elm = get_list_element(&screen_head, screen_id);
+		if (screen_elm == NULL) {
+			screen_elm = add_screen(screen_id);
+		}
+
+		//2. layers(list)
+		json_t *layer_ary_jobj = NULL;
+		parse_layers(screen_jobj, &layer_ary_jobj);
+
+		json_t *layer_jobj;
+		json_array_foreach(layer_ary_jobj, layer_idx, layer_jobj)
+		{
+			int layer_id = 0;
+			parse_id(layer_jobj, &layer_id);
+
+			list_element_t *layer_elm;
+			layer_elm = grpc_add_layer(screen_elm, layer_jobj, layer_id,
+						   CMD_TYPE_ADD, insert_info_default);
+
+			//3. surfaces(list)
+			json_t *surface_ary_jobj = NULL;
+			parse_surfaces(layer_jobj, &surface_ary_jobj);
+
+			json_t *surface_jobj;
+			json_array_foreach(surface_ary_jobj, surface_idx,
+					   surface_jobj)
+			{
+				int surface_id = 0;
+				parse_id(surface_jobj, &surface_id);
+
+				grpc_add_surface(layer_elm, surface_jobj,
+						 surface_id, CMD_TYPE_ADD,
+						 insert_info_default);
+			}
+		}
+		grpc_add_layers_to_screen(screen_elm);
+	}
+
+	return 0;
+}
+
+static int parse_init_json_config(char *json_cfg_path, enum shell_type type)
 {
 	int target_idx;
 
@@ -883,8 +1025,14 @@ static int parse_init_json_config(char *json_cfg_path)
 			continue;
 		}
 
-		if (parse_all_in_screen(target_jobj) < 0) {
-			return -1;
+		if (type == IVI_SHELL) {
+			if (parse_all_in_screen(target_jobj) < 0) {
+				return -1;
+			}
+		} else {
+			if (parse_all_grpc_in_screen(target_jobj) < 0) {
+				return -1;
+			}
 		}
 	}
 
@@ -921,20 +1069,22 @@ static void remove_all(void)
 	debug_print_all_list();
 }
 
-int parser_init(char *json_cfg_path)
+int parser_init(char *json_cfg_path, enum shell_type type)
 {
 	init_list(&screen_head);
 	init_list(&surface_properties_head);
 
 	if (json_cfg_path) {
-		parse_init_json_config(json_cfg_path);
+		parse_init_json_config(json_cfg_path, type);
 	}
 
-	if (TAILQ_EMPTY(&screen_head)) {
-		init_default_config();
-	}
+	if (type == IVI_SHELL) {
+		if (TAILQ_EMPTY(&screen_head)) {
+			init_default_config();
+		}
 
-	wrap_ilm_set_notification_callback();
+		wrap_ilm_set_notification_callback();
+	}
 
 	debug_print_all_list();
 }
@@ -1096,6 +1246,64 @@ static int parse_add_surface_command(json_t *jobject)
 	return 0;
 }
 
+static int parse_add_surface_grpc_command(json_t *jobject)
+{
+	int screen_idx, lyr_idx, surface_idx;
+	json_t *screen_ary_jobj = NULL;
+	if (parse_screens(jobject, &screen_ary_jobj) < 0) {
+		return -1;
+	}
+
+	json_t *screen_jobj;
+	json_array_foreach(screen_ary_jobj, screen_idx, screen_jobj)
+	{
+		insert_info_t insert_info = insert_info_default;
+		parse_insert_info(screen_jobj, &insert_info);
+
+		json_t *layer_ary_jobj = NULL;
+		if (parse_layers(screen_jobj, &layer_ary_jobj) < 0) {
+			return -1;
+		}
+
+		json_t *layer_jobj;
+		json_array_foreach(layer_ary_jobj, lyr_idx, layer_jobj)
+		{
+			int layer_id = 0;
+			parse_id(layer_jobj, &layer_id);
+
+			list_element_t *layer_elm = get_layer(layer_id);
+			if (layer_elm != NULL) {
+				json_t *surface_ary_jobj = NULL;
+				if (parse_surfaces(layer_jobj,
+						   &surface_ary_jobj) < 0) {
+					return -1;
+				}
+
+				json_t *surface_jobj;
+				json_array_foreach(surface_ary_jobj,
+						   surface_idx, surface_jobj)
+				{
+					int surface_id = 0;
+					if (parse_id(surface_jobj,
+						     &surface_id) < 0) {
+						return -1;
+					}
+
+					grpc_add_surface(layer_elm, surface_jobj, surface_id, CMD_TYPE_ADD, insert_info);
+				}
+			}
+		}
+	}
+
+	return 0;
+}
+
+
+/* FIXME: implement this */
+static int parse_unsupported_command(json_t *jobject)
+{
+}
+
 static int parse_remove_surface_command(json_t *jobject)
 {
 	int lyr_idx, surface_idx;
@@ -1134,6 +1342,47 @@ static int parse_remove_surface_command(json_t *jobject)
 				/* set ivi config */
 				wrap_ilm_remove_surface(layer_elm->id,
 							surface_id);
+			}
+		}
+	}
+
+	return 0;
+}
+
+static int parse_remove_surface_grpc_command(json_t *jobject)
+{
+	int lyr_idx, surface_idx;
+
+	json_t *layer_ary_jobj = NULL;
+	if (parse_layers(jobject, &layer_ary_jobj) < 0) {
+		return -1;
+	}
+
+	json_t *layer_jobj;
+	json_array_foreach(layer_ary_jobj, lyr_idx, layer_jobj)
+	{
+		int layer_id = 0;
+		if (parse_id(layer_jobj, &layer_id) < 0) {
+			return -1;
+		}
+
+		list_element_t *layer_elm = get_layer(layer_id);
+		if (layer_elm != NULL) {
+			json_t *surface_ary_jobj = NULL;
+			if (parse_surfaces(layer_jobj, &surface_ary_jobj) < 0) {
+				return -1;
+			}
+
+			json_t *surface_jobj;
+			json_array_foreach(surface_ary_jobj, surface_idx,
+					   surface_jobj)
+			{
+				int surface_id = 0;
+				if (parse_id(surface_jobj, &surface_id) < 0) {
+					return -1;
+				}
+
+				remove_surface(layer_elm, surface_id);
 			}
 		}
 	}
@@ -1195,7 +1444,26 @@ static int parse_init_screen_command(json_t *jobject)
 	return 0;
 }
 
-int parser_parse_recv_command(char *msg)
+static int parse_init_grpc_screen_command(json_t *jobject)
+{
+	json_error_t jerror;
+	json_t *root_jobj;
+
+	//0. version
+	if (parse_version(jobject) < 0) {
+		/*return -1;*/
+	}
+
+	remove_all();
+
+	if (parse_all_grpc_in_screen(jobject) < 0) {
+		return -1;
+	}
+
+	return 0;
+}
+
+int parser_parse_recv_command(char *msg, enum shell_type type)
 {
 	/* str to json */
 	json_t *jobject;
@@ -1211,24 +1479,46 @@ int parser_parse_recv_command(char *msg)
 		fprintf(stderr, "%s(%d) ERROR: Not find command property\n",
 			__func__, __LINE__);
 	} else {
-		if (strcmp("add_surface", cmd_name) == 0) {
-			parse_add_surface_command(jobject);
-		} else if (strcmp("remove_surface", cmd_name) == 0) {
-			parse_remove_surface_command(jobject);
-		} else if (strcmp("modify_surface", cmd_name) == 0) {
-			parse_modify_surface_command(jobject);
-		} else if (strcmp("add_layer", cmd_name) == 0) {
-			parse_add_layer_command(jobject);
-		} else if (strcmp("remove_layer", cmd_name) == 0) {
-			parse_remove_layer_command(jobject);
-		} else if (strcmp("modify_layer", cmd_name) == 0) {
-			parse_modify_layer_command(jobject);
-		} else if (strcmp("initial_screen", cmd_name) == 0) {
-			parse_init_screen_command(jobject);
-		} else {
-			fprintf(stderr,
-				"%s(%d) ERROR: Illegal command name %s\n",
-				__func__, __LINE__, cmd_name);
+		if (type == IVI_SHELL) {
+			if (strcmp("add_surface", cmd_name) == 0) {
+				parse_add_surface_command(jobject);
+			} else if (strcmp("remove_surface", cmd_name) == 0) {
+				parse_remove_surface_command(jobject);
+			} else if (strcmp("modify_surface", cmd_name) == 0) {
+				parse_modify_surface_command(jobject);
+			} else if (strcmp("add_layer", cmd_name) == 0) {
+				parse_add_layer_command(jobject);
+			} else if (strcmp("remove_layer", cmd_name) == 0) {
+				parse_remove_layer_command(jobject);
+			} else if (strcmp("modify_layer", cmd_name) == 0) {
+				parse_modify_layer_command(jobject);
+			} else if (strcmp("initial_screen", cmd_name) == 0) {
+				parse_init_screen_command(jobject);
+			} else {
+				fprintf(stderr,
+					"%s(%d) ERROR: Illegal command name %s\n",
+					__func__, __LINE__, cmd_name);
+			}
+		} else if (type == IVI_GRPC) {
+			if (strcmp("add_surface", cmd_name) == 0) {
+				parse_add_surface_grpc_command(jobject);
+			} else if (strcmp("remove_surface", cmd_name) == 0) {
+				parse_remove_surface_grpc_command(jobject);
+			} else if (strcmp("modify_surface", cmd_name) == 0) {
+				parse_unsupported_command(jobject);
+			} else if (strcmp("add_layer", cmd_name) == 0) {
+				parse_unsupported_command(jobject);
+			} else if (strcmp("remove_layer", cmd_name) == 0) {
+				parse_unsupported_command(jobject);
+			} else if (strcmp("modify_layer", cmd_name) == 0) {
+				parse_unsupported_command(jobject);
+			} else if (strcmp("initial_screen", cmd_name) == 0) {
+				parse_init_grpc_screen_command(jobject);
+			} else {
+				fprintf(stderr,
+					"%s(%d) ERROR: Illegal command name %s\n",
+					__func__, __LINE__, cmd_name);
+			}
 		}
 	}
 

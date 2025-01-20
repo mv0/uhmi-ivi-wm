@@ -69,7 +69,7 @@ void wait_event_loop(void)
 		poll(fds, 3, -1);
 
 		/* callback pipe */
-		if (fds[0].revents & POLLIN) {
+		if (!use_grpc_proxy && (fds[0].revents & POLLIN)) {
 			cbdata data;
 			int size = read(pipe_readfd, &data, sizeof(data));
 			if (size == -1) {
@@ -110,6 +110,12 @@ void wait_event_loop(void)
 		/* receive command */
 		if (fds[2].revents & POLLIN) {
 			int resp = -1;
+			enum shell_type sh_type;
+			if (!use_grpc_proxy)
+				sh_type = IVI_SHELL;
+			else
+				sh_type = IVI_GRPC;
+
 			if (exchange_magiccode_with_client(accept_fd) == 0) {
 				int size = acquire_body_size_from_client(
 					accept_fd);
@@ -118,7 +124,7 @@ void wait_event_loop(void)
 					acquire_body_from_client(accept_fd,
 								 &msg, size);
 					//fprintf (stderr, "%s\n", json_dumps (jobj, sizeof (jobj)));
-					resp = parser_parse_recv_command(msg);
+					resp = parser_parse_recv_command(msg, sh_type);
 					if (msg) {
 						free(msg);
 					}
@@ -176,6 +182,7 @@ static void parse_option(int argc, char *argv[])
 int main(int argc, char *argv[])
 {
 	struct GrpcClient *grpc_client = NULL;
+	enum shell_type sh_type;
 
 	if ((argc > 1) && (!strncmp(argv[1], "-", 1))) {
 		parse_option(argc, argv);
@@ -189,18 +196,23 @@ int main(int argc, char *argv[])
 	}
 	pipe_readfd = pipefd[0];
 
-	if (!use_grpc_proxy)
+	if (!use_grpc_proxy) {
+		sh_type = IVI_SHELL;
 		wrap_ilm_init(pipefd[1]);
-	else
+	} else {
+		sh_type = IVI_GRPC;
 		grpc_client = init_grpc_client();
+	}
 
-	parser_init(json_cfg_path);
+	parser_init(json_cfg_path, sh_type);
 
 	wait_event_loop();
 
 	close(pipefd[0]);
 	close(pipefd[1]);
-	destroy_grpc_client(grpc_client);
+
+	if (use_grpc_proxy)
+		destroy_grpc_client(grpc_client);
 
 	return EXIT_SUCCESS;
 }

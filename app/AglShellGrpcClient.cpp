@@ -211,7 +211,9 @@ GrpcClient::GetOutputs()
 extern "C" GrpcClient *init_grpc_client(void)
 {
 	GrpcClient *client = new GrpcClient();
+	client->WaitForConnected(500, 10);
 
+	fprintf(stderr, "%s() gRPC connection ready\n", __func__);
 	return client;
 }
 

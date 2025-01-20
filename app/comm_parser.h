@@ -51,8 +51,13 @@ typedef struct _list_element {
 	TAILQ_ENTRY(_list_element) entry;
 } list_element_t;
 
-int parser_init(char *json_cfg_path);
-int parser_parse_recv_command(char *msg);
+enum shell_type {
+	IVI_SHELL,
+	IVI_GRPC,
+};
+
+int parser_init(char *json_cfg_path, enum shell_type type);
+int parser_parse_recv_command(char *msg, enum shell_type type);
 
 int parser_add_ivi_surface_by_event_notification(t_ilm_uint surface_id);
 int parser_check_registered_surface_in_list_tree(t_ilm_uint surface_id);
