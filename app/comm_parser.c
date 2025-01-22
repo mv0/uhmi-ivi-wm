@@ -842,6 +842,8 @@ grpc_add_surface(list_element_t *layer_elm, json_t *surface_jobj,
 	list_element_t *surface_elm =
 		pop_list_element(&layer_elm->list_head, surface_id);
 
+	fprintf(stderr, "%s()\n", __func__);
+
 	if (surface_elm == NULL) {
 		surface_properties_t surface_prop;
 		parse_surface_properties(&surface_prop, surface_jobj, type);
@@ -849,6 +851,7 @@ grpc_add_surface(list_element_t *layer_elm, json_t *surface_jobj,
 		surface_elm = add_surface(layer_elm, &surface_prop, surface_id, insert_info);
 
 		/* FIXME: gRPC floating here? */
+		fprintf(stderr, "%s() Should set app here\n", __func__);
 	}
 
 	return surface_elm;
@@ -1075,6 +1078,7 @@ int parser_init(char *json_cfg_path, enum shell_type type)
 	init_list(&surface_properties_head);
 
 	if (json_cfg_path) {
+		fprintf(stderr, "%s() Parsing json_cfg_path %s\n", __func__, json_cfg_path);
 		parse_init_json_config(json_cfg_path, type);
 	}
 
@@ -1250,6 +1254,9 @@ static int parse_add_surface_grpc_command(json_t *jobject)
 {
 	int screen_idx, lyr_idx, surface_idx;
 	json_t *screen_ary_jobj = NULL;
+
+	fprintf(stderr, "%s()\n", __func__);
+
 	if (parse_screens(jobject, &screen_ary_jobj) < 0) {
 		return -1;
 	}
@@ -1473,6 +1480,8 @@ int parser_parse_recv_command(char *msg, enum shell_type type)
 	if (parse_version(jobject) < 0) {
 		/*return -1;*/
 	}
+
+	fprintf(stderr, "%s()\n", __func__);
 
 	char cmd_name[16] = { 0 };
 	if (parse_command(jobject, cmd_name) < 0) {

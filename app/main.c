@@ -111,10 +111,14 @@ void wait_event_loop(void)
 		if (fds[2].revents & POLLIN) {
 			int resp = -1;
 			enum shell_type sh_type;
-			if (!use_grpc_proxy)
+
+			if (!use_grpc_proxy) {
 				sh_type = IVI_SHELL;
-			else
+				fprintf(stderr, "%s() using IVI_SHELL\n", __func__);
+			} else {
 				sh_type = IVI_GRPC;
+				fprintf(stderr, "%s() using IVI_GPRPC\n", __func__);
+			}
 
 			if (exchange_magiccode_with_client(accept_fd) == 0) {
 				int size = acquire_body_size_from_client(
@@ -198,9 +202,13 @@ int main(int argc, char *argv[])
 
 	if (!use_grpc_proxy) {
 		sh_type = IVI_SHELL;
+		fprintf(stderr, "%s() using IVI_SHELL\n", __func__);
+
 		wrap_ilm_init(pipefd[1]);
 	} else {
 		sh_type = IVI_GRPC;
+		fprintf(stderr, "%s() using IVI_GRPC\n", __func__);
+
 		grpc_client = init_grpc_client();
 	}
 
