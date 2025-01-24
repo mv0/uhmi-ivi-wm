@@ -49,6 +49,8 @@ static int socket_fd = -1;
 static int accept_fd = -1;
 static int pipe_readfd = -1;
 
+struct GrpcClient *grpc_client = NULL;
+
 void wait_event_loop(void)
 {
 	struct pollfd fds[3];
@@ -128,7 +130,7 @@ void wait_event_loop(void)
 					acquire_body_from_client(accept_fd,
 								 &msg, size);
 					//fprintf (stderr, "%s\n", json_dumps (jobj, sizeof (jobj)));
-					resp = parser_parse_recv_command(msg, sh_type);
+					resp = parser_parse_recv_command(msg, sh_type, grpc_client);
 					if (msg) {
 						free(msg);
 					}
@@ -185,7 +187,6 @@ static void parse_option(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
-	struct GrpcClient *grpc_client = NULL;
 	enum shell_type sh_type;
 
 	if ((argc > 1) && (!strncmp(argv[1], "-", 1))) {
@@ -212,7 +213,7 @@ int main(int argc, char *argv[])
 		grpc_client = init_grpc_client();
 	}
 
-	parser_init(json_cfg_path, sh_type);
+	parser_init(json_cfg_path, sh_type, grpc_client);
 
 	wait_event_loop();
 

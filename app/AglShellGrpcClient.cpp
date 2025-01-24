@@ -94,6 +94,8 @@ GrpcClient::SetAppFloat(const std::string& app_id, int32_t x_pos, int32_t y_pos)
 	grpc::ClientContext context;
 	::agl_shell_ipc::FloatResponse reply;
 
+	fprintf(stderr, "%s() calling SetAppFloat with x_pos %d, y_pos %d\n", __func__, x_pos, y_pos);
+
 	grpc::Status status = m_stub->SetAppFloat(&context, request, &reply);
 	return status.ok();
 }
@@ -169,6 +171,8 @@ GrpcClient::SetAppScale(const std::string& app_id, int32_t width, int32_t height
 	grpc::ClientContext context;
 	::agl_shell_ipc::AppScaleResponse reply;
 
+	fprintf(stderr, "%s() calling SetAppScale with width %d, height %d\n", __func__, width, height);
+
 	grpc::Status status = m_stub->SetAppScale(&context, request, &reply);
 	return status.ok();
 }
@@ -220,6 +224,16 @@ extern "C" GrpcClient *init_grpc_client(void)
 extern "C" void grpc_client_set_app_float(GrpcClient *c, const char *app_id, int32_t x_pos, int32_t y_pos)
 {
 	c->SetAppFloat(std::string(app_id), x_pos, y_pos);
+}
+
+extern "C" void grpc_client_activate_app(GrpcClient *c, const char *app_id, const char *output)
+{
+	c->ActivateApp(std::string(app_id), std::string(output));
+}
+
+extern "C" void grpc_client_set_app_scale(GrpcClient *c, const char *app_id, int32_t width, int32_t height)
+{
+	c->SetAppScale(std::string(app_id), width, height);
 }
 
 extern "C" void destroy_grpc_client(GrpcClient *c)

@@ -22,6 +22,7 @@
 
 #include "ilm_control_wrapper.h"
 #include "comm_parser.h"
+#include "aglshell_grpc_wrapper.h"
 
 #define UHMI_IVI_WM_VERSION "1.0.0"
 
@@ -193,6 +194,9 @@ static list_element_t *add_surface(list_element_t *layer_elm,
 {
 	list_element_t *surface_elm = calloc(1, sizeof(*surface_elm));
 	surface_elm->id = surface_id;
+
+	fprintf(stderr, "%s(): Creating surface element object for surface_id: %d\n",
+			__func__, surface_elm->id);
 
 	add_surface_properties(prop, surface_id);
 	insert_list_element(&layer_elm->list_head, surface_elm, insert_info);
@@ -829,6 +833,15 @@ grpc_add_layer(list_element_t *screen_elm, json_t *layer_jobj, int layer_id,
 		layer_properties_t layer_prop;
 		parse_layer_properties(&layer_prop, layer_jobj, type);
 
+		fprintf(stderr, "%s() layer width %d, layer height %d, "
+				"src_x %d, src_y %d, src_w %d, src_h %d "
+				"dst_x %d, dst_y %d, dst_w %d, dst_h %d ",
+				__func__, layer_prop.width, layer_prop.height,
+				layer_prop.lp.src_x, layer_prop.lp.src_y,
+				layer_prop.lp.src_w, layer_prop.lp.src_h,
+				layer_prop.lp.dst_x, layer_prop.lp.dst_y,
+				layer_prop.lp.dst_w, layer_prop.lp.dst_h);
+
 		layer_elm = add_layer(screen_elm, &layer_prop, layer_id, insert_info);
 	}
 
@@ -837,21 +850,64 @@ grpc_add_layer(list_element_t *screen_elm, json_t *layer_jobj, int layer_id,
 
 static list_element_t *
 grpc_add_surface(list_element_t *layer_elm, json_t *surface_jobj,
-		 int surface_id, CMD_TYPE type, insert_info_t insert_info)
+		 int surface_id, CMD_TYPE type, insert_info_t insert_info, struct GrpcClient *grpc_client)
 {
 	list_element_t *surface_elm =
 		pop_list_element(&layer_elm->list_head, surface_id);
 
-	fprintf(stderr, "%s()\n", __func__);
+	layer_properties_t *llayer_prop = 
+		(struct layer_properties_t *) layer_elm->prop;
+
+	fprintf(stderr, "%s() surface_id: %d\n", __func__, surface_id);
 
 	if (surface_elm == NULL) {
+#ifndef MAX_PATH_SIZE
+#define MAX_PATH_SIZE 4096
+#endif
+		char appid[MAX_PATH_SIZE];
+
 		surface_properties_t surface_prop;
+		layout_properties_t layer_prop;
+
 		parse_surface_properties(&surface_prop, surface_jobj, type);
 
 		surface_elm = add_surface(layer_elm, &surface_prop, surface_id, insert_info);
 
-		/* FIXME: gRPC floating here? */
-		fprintf(stderr, "%s() Should set app here\n", __func__);
+		layer_prop = surface_prop.lp;
+
+		fprintf(stderr, "%s() surface props: src_x %d, src_y %d, src_w %d, src_h %d, "
+				"dst_x %d, dst_y %d, dst_w %d, dst_h %d\n", __func__,
+				layer_prop.src_x, layer_prop.src_y, layer_prop.src_w, layer_prop.src_h,
+				layer_prop.dst_x, layer_prop.dst_y, layer_prop.dst_w, layer_prop.dst_h);
+
+		/* FIXME: the proxy should probably use the name of the app, needs investigation */
+		const char *dpath = "com.github.remote-virtio-gpu.renderer.sc0.id";
+		/* FIXME: get screen from List */
+		const char *output_name = "HDMI-A-2";
+
+		snprintf(appid, MAX_PATH_SIZE, "%s%d", dpath, surface_elm->id);
+
+
+		if (llayer_prop->lp.src_x > 0) {
+			fprintf(stderr, "%s() Setting app %s, at position x: %d, y %d\n",
+					__func__, appid, -llayer_prop->lp.src_x,
+							 llayer_prop->lp.src_y);
+			grpc_client_set_app_float(grpc_client, appid,
+						  -llayer_prop->lp.src_x,
+						  llayer_prop->lp.src_y);
+		} else if (llayer_prop->lp.dst_x > 0) {
+			fprintf(stderr, "%s() Setting app %s, at position x: %d, y %d\n",
+					__func__, appid, llayer_prop->lp.dst_x,
+							 llayer_prop->lp.dst_y);
+			grpc_client_set_app_float(grpc_client, appid,
+						  llayer_prop->lp.dst_x,
+						  llayer_prop->lp.dst_y);
+		}
+
+		fprintf(stderr, "%s() Activating app %s, on output %s\n",
+				__func__, appid, output_name);
+		grpc_client_activate_app(grpc_client, appid, output_name);
+
 	}
 
 	return surface_elm;
@@ -937,7 +993,7 @@ static int parse_all_in_screen(json_t *jobject)
 	return 0;
 }
 
-static int parse_all_grpc_in_screen(json_t *jobject)
+static int parse_all_grpc_in_screen(json_t *jobject, struct GrpcClient *grpc_client)
 {
 	int screen_idx, layer_idx, surface_idx;
 
@@ -950,15 +1006,14 @@ static int parse_all_grpc_in_screen(json_t *jobject)
 	{
 		int screen_id = 0;
 		parse_id(screen_jobj, &screen_id);
-		if (wrap_ilm_screen_exists(screen_id) == 0) {
-			fprintf(stderr, "%s(%d) ERROR: Screen %d not found\n",
-				__func__, __LINE__, screen_id);
-			return -1;
-		}
+
+		fprintf(stderr, "%s() Got screen_id %d\n", __func__, screen_id);
 
 		list_element_t *screen_elm;
 		screen_elm = get_list_element(&screen_head, screen_id);
+
 		if (screen_elm == NULL) {
+			fprintf(stderr, "%s() no screen found for screen_id %d. Creating one now\n", __func__, screen_id);
 			screen_elm = add_screen(screen_id);
 		}
 
@@ -989,7 +1044,7 @@ static int parse_all_grpc_in_screen(json_t *jobject)
 
 				grpc_add_surface(layer_elm, surface_jobj,
 						 surface_id, CMD_TYPE_ADD,
-						 insert_info_default);
+						 insert_info_default, grpc_client);
 			}
 		}
 		grpc_add_layers_to_screen(screen_elm);
@@ -998,7 +1053,7 @@ static int parse_all_grpc_in_screen(json_t *jobject)
 	return 0;
 }
 
-static int parse_init_json_config(char *json_cfg_path, enum shell_type type)
+static int parse_init_json_config(char *json_cfg_path, enum shell_type type, struct GrpcClient *grpc_client)
 {
 	int target_idx;
 
@@ -1033,7 +1088,7 @@ static int parse_init_json_config(char *json_cfg_path, enum shell_type type)
 				return -1;
 			}
 		} else {
-			if (parse_all_grpc_in_screen(target_jobj) < 0) {
+			if (parse_all_grpc_in_screen(target_jobj, grpc_client) < 0) {
 				return -1;
 			}
 		}
@@ -1072,14 +1127,14 @@ static void remove_all(void)
 	debug_print_all_list();
 }
 
-int parser_init(char *json_cfg_path, enum shell_type type)
+int parser_init(char *json_cfg_path, enum shell_type type, struct GrpcClient *grpc_client)
 {
 	init_list(&screen_head);
 	init_list(&surface_properties_head);
 
 	if (json_cfg_path) {
 		fprintf(stderr, "%s() Parsing json_cfg_path %s\n", __func__, json_cfg_path);
-		parse_init_json_config(json_cfg_path, type);
+		parse_init_json_config(json_cfg_path, type, grpc_client);
 	}
 
 	if (type == IVI_SHELL) {
@@ -1250,7 +1305,7 @@ static int parse_add_surface_command(json_t *jobject)
 	return 0;
 }
 
-static int parse_add_surface_grpc_command(json_t *jobject)
+static int parse_add_surface_grpc_command(json_t *jobject, struct GrpcClient *grpc_client)
 {
 	int screen_idx, lyr_idx, surface_idx;
 	json_t *screen_ary_jobj = NULL;
@@ -1296,7 +1351,7 @@ static int parse_add_surface_grpc_command(json_t *jobject)
 						return -1;
 					}
 
-					grpc_add_surface(layer_elm, surface_jobj, surface_id, CMD_TYPE_ADD, insert_info);
+					grpc_add_surface(layer_elm, surface_jobj, surface_id, CMD_TYPE_ADD, insert_info, grpc_client);
 				}
 			}
 		}
@@ -1356,7 +1411,7 @@ static int parse_remove_surface_command(json_t *jobject)
 	return 0;
 }
 
-static int parse_remove_surface_grpc_command(json_t *jobject)
+static int parse_remove_surface_grpc_command(json_t *jobject, struct GrpcClient *grpc_client)
 {
 	int lyr_idx, surface_idx;
 
@@ -1451,7 +1506,7 @@ static int parse_init_screen_command(json_t *jobject)
 	return 0;
 }
 
-static int parse_init_grpc_screen_command(json_t *jobject)
+static int parse_init_grpc_screen_command(json_t *jobject, struct GrpcClient *grpc_client)
 {
 	json_error_t jerror;
 	json_t *root_jobj;
@@ -1463,14 +1518,14 @@ static int parse_init_grpc_screen_command(json_t *jobject)
 
 	remove_all();
 
-	if (parse_all_grpc_in_screen(jobject) < 0) {
+	if (parse_all_grpc_in_screen(jobject, grpc_client) < 0) {
 		return -1;
 	}
 
 	return 0;
 }
 
-int parser_parse_recv_command(char *msg, enum shell_type type)
+int parser_parse_recv_command(char *msg, enum shell_type type, struct GrpcClient *grpc_client)
 {
 	/* str to json */
 	json_t *jobject;
@@ -1510,9 +1565,9 @@ int parser_parse_recv_command(char *msg, enum shell_type type)
 			}
 		} else if (type == IVI_GRPC) {
 			if (strcmp("add_surface", cmd_name) == 0) {
-				parse_add_surface_grpc_command(jobject);
+				parse_add_surface_grpc_command(jobject, grpc_client);
 			} else if (strcmp("remove_surface", cmd_name) == 0) {
-				parse_remove_surface_grpc_command(jobject);
+				parse_remove_surface_grpc_command(jobject, grpc_client);
 			} else if (strcmp("modify_surface", cmd_name) == 0) {
 				parse_unsupported_command(jobject);
 			} else if (strcmp("add_layer", cmd_name) == 0) {
@@ -1522,7 +1577,7 @@ int parser_parse_recv_command(char *msg, enum shell_type type)
 			} else if (strcmp("modify_layer", cmd_name) == 0) {
 				parse_unsupported_command(jobject);
 			} else if (strcmp("initial_screen", cmd_name) == 0) {
-				parse_init_grpc_screen_command(jobject);
+				parse_init_grpc_screen_command(jobject, grpc_client);
 			} else {
 				fprintf(stderr,
 					"%s(%d) ERROR: Illegal command name %s\n",

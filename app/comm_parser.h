@@ -20,6 +20,8 @@
 
 #include <sys/queue.h>
 
+struct GrpcClient;
+
 typedef struct _common_properties {
 	t_ilm_uint src_x, src_y, src_w, src_h;
 	t_ilm_uint dst_x, dst_y, dst_w, dst_h;
@@ -56,8 +58,8 @@ enum shell_type {
 	IVI_GRPC,
 };
 
-int parser_init(char *json_cfg_path, enum shell_type type);
-int parser_parse_recv_command(char *msg, enum shell_type type);
+int parser_init(char *json_cfg_path, enum shell_type type, struct GrpcClient *grpc_client);
+int parser_parse_recv_command(char *msg, enum shell_type type, struct GrpcClient *grpc_client);
 
 int parser_add_ivi_surface_by_event_notification(t_ilm_uint surface_id);
 int parser_check_registered_surface_in_list_tree(t_ilm_uint surface_id);
